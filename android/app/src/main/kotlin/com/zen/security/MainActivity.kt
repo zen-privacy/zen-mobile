@@ -143,7 +143,7 @@ class MainActivity : FlutterActivity() {
             })
 
             put("route", JSONObject().apply {
-                put("auto_detect_interface", true)
+                put("auto_detect_interface", false)
                 put("final", "proxy")
                 put("rules", org.json.JSONArray().apply {
                     put(JSONObject().apply {
