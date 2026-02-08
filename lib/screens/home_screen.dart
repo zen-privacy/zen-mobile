@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../models/server_profile.dart';
 import '../services/vpn_service.dart';
@@ -460,6 +461,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const Spacer(),
+                GestureDetector(
+                  onTap: () {
+                    if (_logs.isNotEmpty) {
+                      Clipboard.setData(ClipboardData(text: _logs.join('\n')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Logs copied'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    }
+                  },
+                  child: const Icon(Icons.copy, color: Colors.green, size: 20),
+                ),
+                const SizedBox(width: 16),
                 GestureDetector(
                   onTap: _refreshLogs,
                   child: const Icon(Icons.refresh, color: Colors.green, size: 20),
