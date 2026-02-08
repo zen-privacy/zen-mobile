@@ -102,13 +102,7 @@ class MainActivity : FlutterActivity() {
                 put(JSONObject().apply {
                     put("type", "tun")
                     put("tag", "tun-in")
-                    put("address", org.json.JSONArray().apply {
-                        put("172.19.0.1/30")
-                        put("fdfe:dcba:9876::1/126")
-                    })
                     put("mtu", 9000)
-                    put("auto_route", true)
-                    put("strict_route", false)
                     put("stack", "mixed")
                     put("sniff", true)
                     put("sniff_override_destination", false)
