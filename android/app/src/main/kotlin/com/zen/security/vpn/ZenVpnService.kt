@@ -143,7 +143,7 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     override fun openTun(options: TunOptions): Int {
         val builder = Builder()
-            .setSession("Zen Security")
+            .setSession("Zen Privacy")
             .setMtu(options.mtu)
 
         // Add IPv4 addresses using iterator
@@ -174,10 +174,17 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             builder.addRoute(route.address(), route.prefix())
         }
 
-        // Add DNS servers using iterator
-        val dnsIterator = options.getDNSServerAddress()
-        while (dnsIterator.hasNext()) {
-            builder.addDnsServer(dnsIterator.next())
+        // Add DNS server (returns comma-separated string)
+        try {
+            val dnsAddresses = options.getDNSServerAddress()
+            for (dns in dnsAddresses.split(",")) {
+                val trimmed = dns.trim()
+                if (trimmed.isNotEmpty()) {
+                    builder.addDnsServer(trimmed)
+                }
+            }
+        } catch (e: Exception) {
+            builder.addDnsServer("1.1.1.1")
         }
 
         // Exclude our app to prevent loops
@@ -260,7 +267,7 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 "VPN Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Zen Security VPN connection status"
+                description = "Zen Privacy VPN connection status"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
@@ -280,7 +287,7 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }.apply {
-            setContentTitle("Zen Security")
+            setContentTitle("Zen Privacy")
             setContentText("VPN Connected")
             setSmallIcon(android.R.drawable.ic_lock_lock)
             setContentIntent(pendingIntent)
@@ -288,16 +295,8 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         }.build()
     }
 
-    // Traffic stats
+    // Traffic stats (BoxService doesn't expose status directly)
     fun getTrafficStats(): Map<String, Long> {
-        return try {
-            val status = boxService?.status()
-            mapOf(
-                "rx" to (status?.downlink ?: 0L),
-                "tx" to (status?.uplink ?: 0L)
-            )
-        } catch (e: Exception) {
-            mapOf("rx" to 0L, "tx" to 0L)
-        }
+        return mapOf("rx" to 0L, "tx" to 0L)
     }
 }
