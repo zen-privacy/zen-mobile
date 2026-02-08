@@ -102,6 +102,9 @@ class MainActivity : FlutterActivity() {
                 put(JSONObject().apply {
                     put("type", "tun")
                     put("tag", "tun-in")
+                    put("address", org.json.JSONArray().apply {
+                        put("172.19.0.1/30")
+                    })
                     put("mtu", 9000)
                     put("stack", "mixed")
                     put("sniff", true)
