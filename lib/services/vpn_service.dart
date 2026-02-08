@@ -124,6 +124,28 @@ class VpnService {
     }
   }
 
+  /// Get logs from native VPN service
+  Future<List<String>> getLogs() async {
+    try {
+      final result = await _channel.invokeMethod('getLogs');
+      if (result != null) {
+        return (result as List).map((e) => e.toString()).toList();
+      }
+      return [];
+    } on PlatformException {
+      return [];
+    }
+  }
+
+  /// Get last error
+  Future<String?> getLastError() async {
+    try {
+      return await _channel.invokeMethod('getLastError');
+    } on PlatformException {
+      return null;
+    }
+  }
+
   void _startStatsPolling() {
     _statsTimer?.cancel();
     _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) {

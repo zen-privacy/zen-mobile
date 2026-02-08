@@ -30,9 +30,22 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         private const val TAG = "ZenVpnService"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "zen_vpn_channel"
+        private const val MAX_LOGS = 500
 
         var instance: ZenVpnService? = null
         var isRunning = false
+        val logs = mutableListOf<String>()
+        var lastError: String? = null
+
+        fun addLog(level: String, msg: String) {
+            val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+            val entry = "[$ts] $level: $msg"
+            synchronized(logs) {
+                logs.add(entry)
+                if (logs.size > MAX_LOGS) logs.removeAt(0)
+            }
+            android.util.Log.d(TAG, entry)
+        }
     }
 
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -67,48 +80,48 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     private fun startVpn() {
         if (isRunning) {
-            Log.w(TAG, "VPN already running")
+            addLog("WARN", "VPN already running")
             return
         }
 
+        synchronized(logs) { logs.clear() }
+        lastError = null
+
         scope.launch {
             try {
-                Log.i(TAG, "Starting VPN service...")
-                Log.i(TAG, "Config: ${currentConfig.take(500)}")
+                addLog("INFO", "Starting VPN service...")
+                addLog("INFO", "Config: ${currentConfig.take(1000)}")
 
-                // Start foreground service
                 startForeground(NOTIFICATION_ID, createNotification())
-                Log.i(TAG, "Foreground service started")
+                addLog("INFO", "Foreground service started")
 
-                // Initialize libbox
                 val workDir = filesDir.absolutePath
                 val tempDir = cacheDir.absolutePath
-                Log.i(TAG, "Libbox setup: workDir=$workDir, tempDir=$tempDir")
+                addLog("INFO", "Libbox.setup($workDir, $tempDir)")
                 Libbox.setup(workDir, tempDir, tempDir, false)
-                Log.i(TAG, "Libbox setup done")
+                addLog("INFO", "Libbox setup OK")
 
-                // Create box service with config
-                Log.i(TAG, "Creating box service...")
+                addLog("INFO", "Creating box service...")
                 boxService = Libbox.newService(currentConfig, this@ZenVpnService)
-                Log.i(TAG, "Box service created")
+                addLog("INFO", "Box service created OK")
 
-                // Start command server for traffic stats
-                Log.i(TAG, "Starting command server...")
+                addLog("INFO", "Starting command server...")
                 commandServer = Libbox.newCommandServer(this@ZenVpnService, 50)
                 commandServer?.start()
-                Log.i(TAG, "Command server started")
+                addLog("INFO", "Command server started OK")
 
-                // Start the box service
-                Log.i(TAG, "Starting box service...")
+                addLog("INFO", "Starting box service (sing-box)...")
                 boxService?.start()
-                Log.i(TAG, "Box service started!")
+                addLog("INFO", "Box service started OK!")
 
                 isRunning = true
-                Log.i(TAG, "VPN started successfully with libbox")
+                addLog("INFO", "VPN CONNECTED successfully")
 
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start VPN: ${e.message}", e)
-                Log.e(TAG, "Stack trace:", e)
+                val err = "FAILED: ${e.javaClass.simpleName}: ${e.message}"
+                addLog("ERROR", err)
+                addLog("ERROR", "Stack: ${e.stackTraceToString().take(500)}")
+                lastError = err
                 stopVpn()
             }
         }
@@ -152,7 +165,7 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     // PlatformInterface implementation for libbox v1.10+
 
     override fun openTun(options: TunOptions): Int {
-        Log.i(TAG, "openTun called! MTU=${options.mtu}")
+        addLog("INFO", "openTun called! MTU=${options.mtu}")
         val builder = Builder()
             .setSession("Zen Privacy")
             .setMtu(options.mtu)
@@ -207,12 +220,12 @@ class ZenVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
         vpnInterface = builder.establish()
         val fd = vpnInterface?.fd ?: -1
-        Log.i(TAG, "TUN established, fd=$fd")
+        addLog("INFO", "TUN established, fd=$fd")
         return fd
     }
 
     override fun writeLog(message: String) {
-        Log.i(TAG, message)
+        addLog("BOX", message)
     }
 
     override fun useProcFS(): Boolean = false

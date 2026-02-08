@@ -48,6 +48,15 @@ class MainActivity : FlutterActivity() {
                 "isConnected" -> {
                     result.success(ZenVpnService.isRunning)
                 }
+                "getLogs" -> {
+                    val logsCopy = synchronized(ZenVpnService.logs) {
+                        ZenVpnService.logs.toList()
+                    }
+                    result.success(logsCopy)
+                }
+                "getLastError" -> {
+                    result.success(ZenVpnService.lastError)
+                }
                 else -> result.notImplemented()
             }
         }

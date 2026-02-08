@@ -28,6 +28,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Duration uptime = Duration.zero;
   Timer? _uptimeTimer;
   DateTime? _connectedAt;
+  bool _showLogs = false;
+  List<String> _logs = [];
+  Timer? _logTimer;
 
   @override
   void initState() {
@@ -54,8 +57,29 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _uptimeTimer?.cancel();
+    _logTimer?.cancel();
     _linkController.dispose();
     super.dispose();
+  }
+
+  void _toggleLogs() {
+    setState(() {
+      _showLogs = !_showLogs;
+      if (_showLogs) {
+        _refreshLogs();
+        _logTimer = Timer.periodic(const Duration(seconds: 1), (_) => _refreshLogs());
+      } else {
+        _logTimer?.cancel();
+        _logTimer = null;
+      }
+    });
+  }
+
+  Future<void> _refreshLogs() async {
+    final logs = await _vpnService.getLogs();
+    if (mounted) {
+      setState(() => _logs = logs);
+    }
   }
 
   Future<void> _loadServers() async {
@@ -251,15 +275,15 @@ class _HomeScreenState extends State<HomeScreen> {
               
               // Main content
               Expanded(
-                child: SingleChildScrollView(
+                child: _showLogs ? _buildLogPanel() : SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
                       // Connect Panel with Mask
                       _buildConnectPanel(),
-                      
+
                       const SizedBox(height: 24),
-                      
+
                       // Status Card
                       StatusCard(
                         isConnected: isConnected,
@@ -269,9 +293,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         txBytes: _vpnService.txBytes,
                         formatBytes: _formatBytes,
                       ),
-                      
+
                       const SizedBox(height: 24),
-                      
+
                       // Servers Section
                       _buildServersSection(),
                     ],
@@ -299,21 +323,32 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            'ZEN SECURITY VLESS',
-            style: TextStyle(
-              fontFamily: 'BebasNeue',
-              fontSize: 24,
-              letterSpacing: 4,
-              color: AppTheme.textLight,
-              shadows: [
-                Shadow(
-                  color: AppTheme.redPrimary.withOpacity(0.5),
-                  blurRadius: 10,
-                ),
-              ],
+          const SizedBox(width: 40),
+          Expanded(
+            child: Text(
+              'ZEN PRIVACY',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'BebasNeue',
+                fontSize: 24,
+                letterSpacing: 4,
+                color: AppTheme.textLight,
+                shadows: [
+                  Shadow(
+                    color: AppTheme.redPrimary.withOpacity(0.5),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: _toggleLogs,
+            child: Icon(
+              _showLogs ? Icons.close : Icons.terminal,
+              color: _showLogs ? AppTheme.redPrimary : AppTheme.textMuted,
+              size: 24,
             ),
           ),
         ],
@@ -398,6 +433,84 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLogPanel() {
+    return Container(
+      color: Colors.black,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                const Icon(Icons.terminal, color: Colors.green, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'LOGS (${_logs.length})',
+                  style: const TextStyle(
+                    fontFamily: 'BebasNeue',
+                    fontSize: 16,
+                    color: Colors.green,
+                    letterSpacing: 2,
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: _refreshLogs,
+                  child: const Icon(Icons.refresh, color: Colors.green, size: 20),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Colors.green),
+          Expanded(
+            child: _logs.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No logs yet.\nTry connecting to a server.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: _logs.length,
+                    reverse: true,
+                    itemBuilder: (context, index) {
+                      final log = _logs[_logs.length - 1 - index];
+                      Color color = Colors.grey;
+                      if (log.contains('ERROR') || log.contains('FAILED')) {
+                        color = Colors.red;
+                      } else if (log.contains('WARN')) {
+                        color = Colors.orange;
+                      } else if (log.contains('INFO')) {
+                        color = Colors.green;
+                      } else if (log.contains('BOX')) {
+                        color = Colors.cyan;
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 1),
+                        child: Text(
+                          log,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                            color: color,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
         ],
       ),
     );
