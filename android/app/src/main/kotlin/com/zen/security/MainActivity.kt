@@ -54,117 +54,114 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun mapToSingboxConfig(config: Map<String, Any>): String {
-        // Convert Flutter map to sing-box JSON config
-        val json = JSONObject()
-        
-        // Log settings
-        json.put("log", JSONObject().apply {
-            put("level", "info")
-            put("timestamp", true)
-        })
-        
-        // DNS settings
-        json.put("dns", JSONObject().apply {
-            put("servers", org.json.JSONArray().apply {
-                put(JSONObject().apply {
-                    put("tag", "google")
-                    put("address", "8.8.8.8")
-                })
-                put(JSONObject().apply {
-                    put("tag", "local")
-                    put("address", "223.5.5.5")
-                    put("detour", "direct")
-                })
-            })
-            put("rules", org.json.JSONArray().apply {
-                put(JSONObject().apply {
-                    put("outbound", "any")
-                    put("server", "local")
-                })
-            })
-        })
-        
-        // Inbounds - TUN
-        json.put("inbounds", org.json.JSONArray().apply {
-            put(JSONObject().apply {
-                put("type", "tun")
-                put("tag", "tun-in")
-                put("interface_name", "zen-tun")
-                put("inet4_address", "172.19.0.1/30")
-                put("mtu", 1400)
-                put("auto_route", true)
-                put("strict_route", false)
-                put("stack", "system")
-                put("sniff", true)
-                put("sniff_override_destination", false)
-            })
-        })
-        
-        // Outbounds - VLESS + direct + block
         val server = config["server"] as? String ?: ""
         val port = (config["port"] as? Number)?.toInt() ?: 443
         val uuid = config["uuid"] as? String ?: ""
         val host = config["host"] as? String ?: server
         val path = config["path"] as? String ?: "/"
-        
-        json.put("outbounds", org.json.JSONArray().apply {
-            // VLESS proxy
-            put(JSONObject().apply {
-                put("type", "vless")
-                put("tag", "proxy")
-                put("server", server)
-                put("server_port", port)
-                put("uuid", uuid)
-                put("tls", JSONObject().apply {
-                    put("enabled", true)
-                    put("server_name", host)
-                    put("insecure", false)
+
+        val json = JSONObject().apply {
+            put("log", JSONObject().apply {
+                put("level", "debug")
+                put("timestamp", true)
+            })
+
+            put("dns", JSONObject().apply {
+                put("servers", org.json.JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("tag", "proxy-dns")
+                        put("address", "https://1.1.1.1/dns-query")
+                        put("address_resolver", "direct-dns")
+                        put("detour", "proxy")
+                    })
+                    put(JSONObject().apply {
+                        put("tag", "direct-dns")
+                        put("address", "8.8.8.8")
+                        put("detour", "direct")
+                    })
                 })
-                put("transport", JSONObject().apply {
-                    put("type", "ws")
-                    put("path", path)
-                    put("headers", JSONObject().apply {
-                        put("Host", host)
+                put("rules", org.json.JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("outbound", org.json.JSONArray().apply { put("any") })
+                        put("server", "direct-dns")
+                    })
+                })
+                put("final", "proxy-dns")
+            })
+
+            put("inbounds", org.json.JSONArray().apply {
+                put(JSONObject().apply {
+                    put("type", "tun")
+                    put("tag", "tun-in")
+                    put("address", org.json.JSONArray().apply {
+                        put("172.19.0.1/30")
+                        put("fdfe:dcba:9876::1/126")
+                    })
+                    put("mtu", 9000)
+                    put("auto_route", true)
+                    put("strict_route", false)
+                    put("stack", "mixed")
+                    put("sniff", true)
+                    put("sniff_override_destination", false)
+                })
+            })
+
+            put("outbounds", org.json.JSONArray().apply {
+                put(JSONObject().apply {
+                    put("type", "vless")
+                    put("tag", "proxy")
+                    put("server", server)
+                    put("server_port", port)
+                    put("uuid", uuid)
+                    put("tls", JSONObject().apply {
+                        put("enabled", true)
+                        put("server_name", host)
+                    })
+                    put("transport", JSONObject().apply {
+                        put("type", "ws")
+                        put("path", path)
+                        put("headers", JSONObject().apply {
+                            put("Host", host)
+                        })
+                    })
+                })
+                put(JSONObject().apply {
+                    put("type", "direct")
+                    put("tag", "direct")
+                })
+                put(JSONObject().apply {
+                    put("type", "block")
+                    put("tag", "block")
+                })
+                put(JSONObject().apply {
+                    put("type", "dns")
+                    put("tag", "dns-out")
+                })
+            })
+
+            put("route", JSONObject().apply {
+                put("auto_detect_interface", true)
+                put("final", "proxy")
+                put("rules", org.json.JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("protocol", org.json.JSONArray().apply { put("dns") })
+                        put("outbound", "dns-out")
+                    })
+                    put(JSONObject().apply {
+                        put("ip_is_private", true)
+                        put("outbound", "direct")
                     })
                 })
             })
-            // Direct
-            put(JSONObject().apply {
-                put("type", "direct")
-                put("tag", "direct")
-            })
-            // Block
-            put(JSONObject().apply {
-                put("type", "block")
-                put("tag", "block")
-            })
-            // DNS out
-            put(JSONObject().apply {
-                put("type", "dns")
-                put("tag", "dns-out")
-            })
-        })
-        
-        // Route
-        json.put("route", JSONObject().apply {
-            put("auto_detect_interface", true)
-            put("final", "proxy")
-            put("rules", org.json.JSONArray().apply {
-                put(JSONObject().apply {
-                    put("protocol", "dns")
-                    put("outbound", "dns-out")
-                })
-                put(JSONObject().apply {
-                    put("ip_is_private", true)
-                    put("outbound", "direct")
-                })
-            })
-        })
-        
-        return json.toString()
+        }
+
+        val configStr = json.toString()
+        android.util.Log.d("ZenConfig", "Generated config: $configStr")
+        return configStr
     }
 
     private fun startVpn(config: String, result: MethodChannel.Result) {
+        android.util.Log.i("ZenVPN", "startVpn called, config length: ${config.length}")
         val intent = VpnService.prepare(this)
         if (intent != null) {
             pendingResult = result
@@ -172,10 +169,15 @@ class MainActivity : FlutterActivity() {
             startActivityForResult(intent, VPN_REQUEST_CODE)
         } else {
             // Already have permission, start VPN
-            val vpnIntent = Intent(this, ZenVpnService::class.java)
-            vpnIntent.putExtra("config", config)
-            startService(vpnIntent)
-            result.success(true)
+            try {
+                val vpnIntent = Intent(this, ZenVpnService::class.java)
+                vpnIntent.putExtra("config", config)
+                startService(vpnIntent)
+                result.success(true)
+            } catch (e: Exception) {
+                android.util.Log.e("ZenVPN", "Failed to start VPN service: ${e.message}", e)
+                result.error("VPN_START_FAILED", e.message, null)
+            }
         }
     }
 
