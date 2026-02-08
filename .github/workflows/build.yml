@@ -58,13 +58,13 @@ jobs:
   #         cd build/ios/iphoneos
   #         mkdir Payload
   #         cp -r Runner.app Payload/
-  #         zip -r ZenSecurity.ipa Payload
+  #         zip -r ZenPrivacy.ipa Payload
   #
   #     - name: Upload IPA
   #       uses: actions/upload-artifact@v4
   #       with:
   #         name: ios-ipa
-  #         path: build/ios/iphoneos/ZenSecurity.ipa
+  #         path: build/ios/iphoneos/ZenPrivacy.ipa
   #
   # NOTE: iOS build is disabled. To enable:
   # 1. Open project in Xcode on macOS
@@ -75,6 +75,8 @@ jobs:
   release:
     needs: [build-android]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
@@ -94,8 +96,8 @@ jobs:
       - name: Rename artifacts
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          mv artifacts/android/app-release.apk "artifacts/android/ZenSecurity-${VERSION}.apk"
-          # mv artifacts/ios/ZenSecurity.ipa "artifacts/ios/ZenSecurity-${VERSION}.ipa"
+          mv artifacts/android/app-release.apk "artifacts/android/ZenPrivacy-${VERSION}.apk"
+          # mv artifacts/ios/ZenPrivacy.ipa "artifacts/ios/ZenPrivacy-${VERSION}.ipa"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
