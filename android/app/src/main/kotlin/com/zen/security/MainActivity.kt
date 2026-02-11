@@ -153,10 +153,6 @@ class MainActivity : FlutterActivity() {
                         put("protocol", org.json.JSONArray().apply { put("dns") })
                         put("outbound", "dns-out")
                     })
-                    put(JSONObject().apply {
-                        put("ip_is_private", true)
-                        put("outbound", "direct")
-                    })
                 })
             })
         }
