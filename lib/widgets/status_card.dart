@@ -6,18 +6,12 @@ class StatusCard extends StatelessWidget {
   final bool isConnected;
   final ServerProfile? server;
   final Duration uptime;
-  final int rxBytes;
-  final int txBytes;
-  final String Function(int) formatBytes;
 
   const StatusCard({
     super.key,
     required this.isConnected,
     required this.server,
     required this.uptime,
-    this.rxBytes = 0,
-    this.txBytes = 0,
-    required this.formatBytes,
   });
 
   String _formatUptime(Duration d) {
@@ -56,7 +50,7 @@ class StatusCard extends StatelessWidget {
           const SizedBox(height: 8),
           _buildRow(
             'Protocol',
-            server?.protocol ?? '-',
+            server?.protocolLabel ?? '-',
             AppTheme.textLight,
           ),
           const SizedBox(height: 8),
@@ -65,22 +59,6 @@ class StatusCard extends StatelessWidget {
             isConnected ? _formatUptime(uptime) : '0h 0m 0s',
             AppTheme.accentGold,
           ),
-          if (isConnected) ...[
-            const SizedBox(height: 8),
-            const Divider(color: Colors.white12),
-            const SizedBox(height: 8),
-            _buildRow(
-              '↓ Download',
-              formatBytes(rxBytes),
-              Colors.greenAccent,
-            ),
-            const SizedBox(height: 8),
-            _buildRow(
-              '↑ Upload',
-              formatBytes(txBytes),
-              Colors.orangeAccent,
-            ),
-          ],
         ],
       ),
     );
@@ -98,12 +76,15 @@ class StatusCard extends StatelessWidget {
             color: AppTheme.textMuted,
           ),
         ),
-        Text(
-          value,
-          style: TextStyle(
-            fontFamily: 'SpecialElite',
-            fontSize: 12,
-            color: valueColor,
+        Flexible(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'SpecialElite',
+              fontSize: 12,
+              color: valueColor,
+            ),
+            textAlign: TextAlign.right,
           ),
         ),
       ],

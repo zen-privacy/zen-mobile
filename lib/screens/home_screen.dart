@@ -3,7 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../models/server_profile.dart';
-import '../services/vpn_service.dart';
+import '../models/subscription.dart';
+import '../services/ping_service.dart';
+import '../services/subscription_service.dart';
+import '../services/vpn_service.dart' show VpnService, VpnStatusType;
+import 'settings_screen.dart';
 import '../widgets/mask_button.dart';
 import '../widgets/server_card.dart';
 import '../widgets/status_card.dart';
@@ -24,8 +28,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool isDisconnecting = false;
   ServerProfile? selectedServer;
   final TextEditingController _linkController = TextEditingController();
+  final TextEditingController _subController = TextEditingController();
   
   List<ServerProfile> servers = [];
+  SubscriptionUsage? _subscriptionUsage;
+  bool _isLoadingSub = false;
   Duration uptime = Duration.zero;
   Timer? _uptimeTimer;
   DateTime? _connectedAt;
@@ -33,21 +40,34 @@ class _HomeScreenState extends State<HomeScreen> {
   List<String> _logs = [];
   Timer? _logTimer;
 
+  VpnStatusType _vpnStatus = VpnStatusType.disconnected;
+  String _vpnError = '';
+
   @override
   void initState() {
     super.initState();
     _loadServers();
+    _loadSubscriptions();
     _checkConnectionStatus();
     
-    // Listen to connection state changes
-    _vpnService.connectionState.listen((connected) {
+    // Listen to real VPN status from native
+    _vpnService.statusStream.listen((status) {
       if (mounted) {
         setState(() {
-          isConnected = connected;
-          if (connected) {
+          _vpnStatus = status.status;
+          isConnected = status.status == VpnStatusType.connected;
+          isConnecting = status.status == VpnStatusType.connecting;
+          isDisconnecting = status.status == VpnStatusType.disconnecting;
+          
+          if (status.status == VpnStatusType.error) {
+            _vpnError = status.message;
+            isConnecting = false;
+          }
+          
+          if (isConnected && _connectedAt == null) {
             _connectedAt = DateTime.now();
             _startUptimeTimer();
-          } else {
+          } else if (!isConnected) {
             _stopUptimeTimer();
           }
         });
@@ -60,6 +80,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _uptimeTimer?.cancel();
     _logTimer?.cancel();
     _linkController.dispose();
+    _subController.dispose();
+    SubscriptionService.instance.stopAutoRefresh();
     super.dispose();
   }
 
@@ -68,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _showLogs = !_showLogs;
       if (_showLogs) {
         _refreshLogs();
-        _logTimer = Timer.periodic(const Duration(seconds: 1), (_) => _refreshLogs());
+        _logTimer = Timer.periodic(const Duration(seconds: 3), (_) => _refreshLogs());
       } else {
         _logTimer?.cancel();
         _logTimer = null;
@@ -89,7 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
     
     setState(() {
       servers = serverLinks
-          .map((link) => ServerProfile.fromVlessLink(link))
+          .map((link) => ServerProfile.fromLink(link))
           .whereType<ServerProfile>()
           .toList();
       
@@ -98,12 +120,163 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedServer = servers.first;
       }
     });
+
+    // Ping all servers in the background
+    if (servers.isNotEmpty) {
+      _pingAllServers();
+    }
+  }
+
+  Future<void> _pingAllServers() async {
+    await PingService.instance.pingAll(servers);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSubscriptions() async {
+    await SubscriptionService.instance.loadSubscriptions();
+    // Start auto-refresh
+    SubscriptionService.instance.startAutoRefresh(onRefresh: (newServers) {
+      if (mounted && newServers.isNotEmpty) {
+        setState(() {
+          _mergeSubscriptionServers(newServers);
+        });
+      }
+    });
+  }
+
+  Future<void> _addSubscription() async {
+    final url = _subController.text.trim();
+    if (url.isEmpty) return;
+
+    setState(() => _isLoadingSub = true);
+
+    final result = await SubscriptionService.instance.addSubscription(url);
+    
+    if (!mounted) return;
+
+    if (result.error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.error!),
+          backgroundColor: AppTheme.redPrimary,
+        ),
+      );
+      setState(() => _isLoadingSub = false);
+      return;
+    }
+
+    _subController.clear();
+    setState(() {
+      _subscriptionUsage = result.usage;
+      _mergeSubscriptionServers(result.servers);
+      _isLoadingSub = false;
+    });
+
+    await _saveServers();
+    _pingAllServers();
+
+    if (result.servers.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added ${result.servers.length} servers from subscription'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<void> _refreshSubscriptions() async {
+    setState(() => _isLoadingSub = true);
+    final newServers = await SubscriptionService.instance.refreshAll();
+    if (!mounted) return;
+    setState(() {
+      _mergeSubscriptionServers(newServers);
+      _isLoadingSub = false;
+    });
+    await _saveServers();
+    _pingAllServers();
+  }
+
+  void _mergeSubscriptionServers(List<ServerProfile> newServers) {
+    // Replace subscription servers (keep manually added ones)
+    // For simplicity, add new servers that don't already exist (by rawLink)
+    final existingLinks = servers.map((s) => s.rawLink).toSet();
+    for (final server in newServers) {
+      if (!existingLinks.contains(server.rawLink)) {
+        servers.add(server);
+        existingLinks.add(server.rawLink);
+      }
+    }
+    if (selectedServer == null && servers.isNotEmpty) {
+      selectedServer = servers.first;
+    }
   }
 
   Future<void> _saveServers() async {
     final prefs = await SharedPreferences.getInstance();
     final links = servers.map((s) => s.rawLink).where((l) => l.isNotEmpty).toList();
     await prefs.setStringList('servers', links);
+  }
+
+  // --- Status helpers ---
+  Color get _statusDotColor {
+    switch (_vpnStatus) {
+      case VpnStatusType.connected:
+        return Colors.green;
+      case VpnStatusType.connecting:
+      case VpnStatusType.reconnecting:
+        return Colors.amber;
+      case VpnStatusType.disconnecting:
+        return Colors.orange;
+      case VpnStatusType.error:
+        return Colors.red;
+      case VpnStatusType.disconnected:
+        return Colors.grey;
+    }
+  }
+
+  Color get _statusBorderColor {
+    switch (_vpnStatus) {
+      case VpnStatusType.connected:
+        return Colors.greenAccent;
+      case VpnStatusType.connecting:
+      case VpnStatusType.reconnecting:
+        return Colors.amberAccent;
+      case VpnStatusType.error:
+        return Colors.redAccent;
+      default:
+        return Colors.white24;
+    }
+  }
+
+  String get _statusLabel {
+    switch (_vpnStatus) {
+      case VpnStatusType.connecting:
+        return 'CONNECTING...';
+      case VpnStatusType.connected:
+        return 'CONNECTED';
+      case VpnStatusType.disconnecting:
+        return 'DISCONNECTING...';
+      case VpnStatusType.reconnecting:
+        return 'RECONNECTING...';
+      case VpnStatusType.error:
+        return 'ERROR';
+      case VpnStatusType.disconnected:
+        return 'CONNECT';
+    }
+  }
+
+  String get _statusSubLabel {
+    if (_vpnStatus == VpnStatusType.connecting || _vpnStatus == VpnStatusType.disconnecting) {
+      return 'PLEASE WAIT';
+    }
+    if (_vpnStatus == VpnStatusType.reconnecting) {
+      return 'CONNECTION LOST, RETRYING...';
+    }
+    if (_vpnStatus == VpnStatusType.error && _vpnError.isNotEmpty) {
+      return _vpnError.toUpperCase();
+    }
+    return '';
   }
 
   Future<void> _checkConnectionStatus() async {
@@ -141,20 +314,15 @@ class _HomeScreenState extends State<HomeScreen> {
     if (isConnecting || isDisconnecting) return;
     
     if (isConnected) {
-      // Disconnect
-      setState(() => isDisconnecting = true);
+      // Disconnect — let EventChannel handle state transitions
+      setState(() {
+        isDisconnecting = true;
+        _vpnStatus = VpnStatusType.disconnecting;
+      });
       
-      final success = await _vpnService.disconnect();
-      
-      if (mounted) {
-        setState(() {
-          isConnected = !success;
-          isDisconnecting = false;
-          if (success) {
-            _stopUptimeTimer();
-          }
-        });
-      }
+      await _vpnService.disconnect();
+      // Don't set state manually — EventChannel will broadcast disconnected
+      return;
     } else {
       // Connect
       if (selectedServer == null) {
@@ -167,29 +335,28 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
       
-      setState(() => isConnecting = true);
+      setState(() {
+        isConnecting = true;
+        _vpnStatus = VpnStatusType.connecting;
+      });
       
       final success = await _vpnService.connect(selectedServer!);
       
-      if (mounted) {
+      // If connect() returned false, it means permission was denied or error
+      // EventChannel will handle the actual connected/error status
+      if (!success && mounted) {
         setState(() {
-          isConnected = success;
           isConnecting = false;
-          if (success) {
-            _connectedAt = DateTime.now();
-            _startUptimeTimer();
-          }
+          _vpnStatus = VpnStatusType.disconnected;
         });
-        
-        if (!success) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to connect'),
-              backgroundColor: AppTheme.redPrimary,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to start VPN (permission denied?)'),
+            backgroundColor: AppTheme.redPrimary,
+          ),
+        );
       }
+      // Otherwise, EventChannel status stream handles state transitions
     }
   }
 
@@ -197,30 +364,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final link = _linkController.text.trim();
     if (link.isEmpty) return;
     
-    // Parse VLESS link
-    if (link.startsWith('vless://')) {
-      final parsed = ServerProfile.fromVlessLink(link);
-      if (parsed != null) {
-        setState(() {
-          servers.add(parsed);
-          _linkController.clear();
-          if (selectedServer == null) {
-            selectedServer = parsed;
-          }
-        });
-        _saveServers();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid VLESS link'),
-            backgroundColor: AppTheme.redPrimary,
-          ),
-        );
-      }
+    // Parse server link (VLESS or Hysteria2)
+    final parsed = ServerProfile.fromLink(link);
+    if (parsed != null) {
+      setState(() {
+        servers.add(parsed);
+        _linkController.clear();
+        if (selectedServer == null) {
+          selectedServer = parsed;
+        }
+      });
+      _saveServers();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Only VLESS links are supported'),
+          content: Text('Invalid link. Supported: vless://, hysteria2://, hy2://'),
           backgroundColor: AppTheme.redPrimary,
         ),
       );
@@ -290,9 +448,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         isConnected: isConnected,
                         server: selectedServer,
                         uptime: uptime,
-                        rxBytes: _vpnService.rxBytes,
-                        txBytes: _vpnService.txBytes,
-                        formatBytes: _formatBytes,
                       ),
 
                       const SizedBox(height: 24),
@@ -325,7 +480,17 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Row(
         children: [
-          const SizedBox(width: 40),
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+            child: const Icon(
+              Icons.settings,
+              color: AppTheme.textMuted,
+              size: 22,
+            ),
+          ),
           Expanded(
             child: Text(
               'ZEN PRIVACY',
@@ -390,16 +555,22 @@ class _HomeScreenState extends State<HomeScreen> {
             height: 24,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: isConnected ? Colors.green : Colors.grey,
+              color: _statusDotColor,
               boxShadow: isConnected ? [
                 BoxShadow(
                   color: Colors.green.withOpacity(0.5),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
+              ] : _vpnStatus == VpnStatusType.error ? [
+                BoxShadow(
+                  color: Colors.red.withOpacity(0.5),
+                  blurRadius: 10,
+                  spreadRadius: 2,
+                ),
               ] : null,
               border: Border.all(
-                color: isConnected ? Colors.greenAccent : Colors.white24,
+                color: _statusBorderColor,
                 width: 2,
               ),
             ),
@@ -409,9 +580,7 @@ class _HomeScreenState extends State<HomeScreen> {
           
           // Connect/Disconnect text
           Text(
-            isConnecting ? 'CONNECTING...' 
-              : isDisconnecting ? 'DISCONNECTING...'
-              : isConnected ? 'CONNECTED' : 'CONNECT',
+            _statusLabel,
             style: const TextStyle(
               fontFamily: 'BebasNeue',
               fontSize: 20,
@@ -420,18 +589,21 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           
-          // Wait message
-          if (isConnecting || isDisconnecting)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
+          // Sub-label (wait, error, reconnecting info)
+          if (_statusSubLabel.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
               child: Text(
-                'PLEASE WAIT',
+                _statusSubLabel,
                 style: TextStyle(
                   fontFamily: 'SpecialElite',
                   fontSize: 12,
-                  color: AppTheme.accentGold,
+                  color: _vpnStatus == VpnStatusType.error 
+                      ? AppTheme.redPrimary 
+                      : AppTheme.accentGold,
                   letterSpacing: 1,
                 ),
+                textAlign: TextAlign.center,
               ),
             ),
         ],
@@ -532,18 +704,142 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildSubscriptionUsageBar() {
+    if (_subscriptionUsage == null) return const SizedBox.shrink();
+    final usage = _subscriptionUsage!;
+    final usedPercent = usage.usedPercent;
+    final usedStr = _formatBytes(usage.usedBytes);
+    final totalStr = _formatBytes(usage.totalBytes);
+    final expireStr = usage.expiresAt != null
+        ? '${usage.expiresAt!.year}-${usage.expiresAt!.month.toString().padLeft(2, '0')}-${usage.expiresAt!.day.toString().padLeft(2, '0')}'
+        : '';
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'DATA USAGE: $usedStr / $totalStr',
+                style: const TextStyle(
+                  fontFamily: 'SpecialElite',
+                  fontSize: 11,
+                  color: AppTheme.textMuted,
+                ),
+              ),
+              if (expireStr.isNotEmpty)
+                Text(
+                  'Expires: $expireStr',
+                  style: TextStyle(
+                    fontFamily: 'SpecialElite',
+                    fontSize: 10,
+                    color: usage.isExpired ? Colors.red : AppTheme.textMuted,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: usedPercent,
+              backgroundColor: Colors.white.withOpacity(0.1),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                usedPercent > 0.9 ? Colors.red : usedPercent > 0.7 ? Colors.orange : AppTheme.accentGold,
+              ),
+              minHeight: 6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildServersSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'SERVERS',
-          style: TextStyle(
-            fontFamily: 'BebasNeue',
-            fontSize: 22,
-            letterSpacing: 3,
-            color: AppTheme.textLight,
+        // Subscription URL input
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _subController,
+                style: const TextStyle(fontSize: 13, color: AppTheme.textLight),
+                decoration: const InputDecoration(
+                  hintText: 'Subscription URL',
+                  contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
+                onSubmitted: (_) => _addSubscription(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _isLoadingSub
+                ? const SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: Padding(
+                      padding: EdgeInsets.all(8),
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accentGold),
+                    ),
+                  )
+                : ElevatedButton(
+                    onPressed: _addSubscription,
+                    child: const Text(
+                      'LOAD',
+                      style: TextStyle(fontFamily: 'BebasNeue', fontSize: 14, letterSpacing: 1),
+                    ),
+                  ),
+          ],
+        ),
+
+        if (SubscriptionService.instance.subscriptions.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _buildSubscriptionUsageBar()),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.refresh, color: AppTheme.accentGold, size: 20),
+                onPressed: _isLoadingSub ? null : _refreshSubscriptions,
+                tooltip: 'Refresh subscriptions',
+              ),
+            ],
           ),
+        ],
+
+        const SizedBox(height: 16),
+
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'SERVERS',
+              style: TextStyle(
+                fontFamily: 'BebasNeue',
+                fontSize: 22,
+                letterSpacing: 3,
+                color: AppTheme.textLight,
+              ),
+            ),
+            if (servers.isNotEmpty)
+              Text(
+                '${servers.length} server${servers.length == 1 ? "" : "s"}',
+                style: const TextStyle(
+                  fontFamily: 'SpecialElite',
+                  fontSize: 11,
+                  color: AppTheme.textMuted,
+                ),
+              ),
+          ],
         ),
         
         const SizedBox(height: 12),
@@ -559,7 +855,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: const Center(
               child: Text(
-                'No servers added yet.\nPaste a VLESS link below.',
+                'No servers added yet.\nPaste a VLESS or Hysteria2 link below.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontFamily: 'SpecialElite',
@@ -577,6 +873,7 @@ class _HomeScreenState extends State<HomeScreen> {
               isSelected: selectedServer == server,
               onTap: isConnected ? null : () => setState(() => selectedServer = server),
               onDelete: () => _deleteServer(server),
+              latencyMs: PingService.instance.getLatency(server),
             ),
           )),
         

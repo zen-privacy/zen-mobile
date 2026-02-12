@@ -104,6 +104,4 @@
 - `android/.../MainActivity.kt` — Phase 1-4
 - `android/.../vpn/ZenVpnService.kt` — Phase 2-5
 - `android/.../AndroidManifest.xml` — Phase 4-5
-
-## Verification
-После каждой фазы: `flutter build apk --release`, тег, проверка на телефоне. Логи в UI покажут ошибки.
+ 

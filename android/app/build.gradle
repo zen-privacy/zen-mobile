@@ -24,10 +24,11 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.zen.security"
-    compileSdk 34
-    ndkVersion "25.1.8937393"
+    compileSdk 36
+    ndkVersion "27.0.12077973"
 
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -42,7 +43,7 @@ android {
 
     defaultConfig {
         applicationId "com.zen.security"
-        minSdk 21
+        minSdkVersion flutter.minSdkVersion
         targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
@@ -72,6 +73,8 @@ repositories {
 }
 
 dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+
     // sing-box library for Android (built from source)
     implementation(name: 'libbox', ext: 'aar')
 

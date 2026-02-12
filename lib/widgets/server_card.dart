@@ -7,6 +7,7 @@ class ServerCard extends StatelessWidget {
   final bool isSelected;
   final VoidCallback? onTap;
   final VoidCallback onDelete;
+  final int? latencyMs; // null = not measured, -1 = failed
 
   const ServerCard({
     super.key,
@@ -14,7 +15,23 @@ class ServerCard extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     required this.onDelete,
+    this.latencyMs,
   });
+
+  Color _latencyColor(int ms) {
+    if (ms == -2) return Colors.cyanAccent; // UDP protocol
+    if (ms < 0) return Colors.red;
+    if (ms < 100) return Colors.greenAccent;
+    if (ms < 300) return Colors.amber;
+    return Colors.redAccent;
+  }
+
+  String _latencyText(int? ms) {
+    if (ms == null) return '';
+    if (ms == -2) return 'UDP';
+    if (ms < 0) return 'timeout';
+    return '${ms}ms';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +79,7 @@ class ServerCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${server.address}:${server.port} // ${server.protocol}',
+                      '${server.address}:${server.port} // ${server.protocolLabel}',
                       style: TextStyle(
                         fontFamily: 'SpecialElite',
                         fontSize: 11,
@@ -74,6 +91,29 @@ class ServerCard extends StatelessWidget {
                   ],
                 ),
               ),
+
+              // Latency badge
+              if (latencyMs != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _latencyColor(latencyMs!).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: _latencyColor(latencyMs!).withOpacity(0.4),
+                    ),
+                  ),
+                  child: Text(
+                    _latencyText(latencyMs),
+                    style: TextStyle(
+                      fontFamily: 'SpecialElite',
+                      fontSize: 10,
+                      color: _latencyColor(latencyMs!),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               
               // Delete button
               if (!isSelected || !isDisabled)
